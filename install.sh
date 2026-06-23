@@ -186,7 +186,7 @@ TOTAL=$(vnstat -i $IFACE --oneline 2>/dev/null | awk -F';' '{print $11}')
 echo "=============================="
 echo "     MTProxy Quick Stats      "
 echo "=============================="
-echo "🟢 Active Users:      $(echo "$STATS" | grep '^total_encrypted_connections' | awk '{print $2}')"
+echo "🟢 Active Users:      $(echo "$STATS" | grep '^active_inbound_connections' | awk '{print $2}')"
 echo "🔄 Total Connections: $(echo "$STATS" | grep '^total_allocated_connections' | awk '{print $2}')"
 echo "------------------------------"
 echo "⬇️  Session Download: $(to_mb $RX) MB"
