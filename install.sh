@@ -2,7 +2,7 @@
 
 # ==============================
 #   MTProxy Auto Setup Script
-#   github.com/TelegramMessenger
+#   Upgraded Edition (FakeTLS + Safe UFW)
 # ==============================
 
 RED='\033[0;31m'
@@ -32,7 +32,7 @@ PORT=${PORT:-443}
 
 if command -v ss >/dev/null 2>&1; then
     if ss -tuln | grep -qE ":${PORT}\b"; then
-        error "Port $PORT is already in use! Please stop the conflicting service or choose another port."
+        error "Port $PORT is already in use! Please stop the conflicting service."
     fi
 fi
 log "Using Port: $PORT"
@@ -68,11 +68,14 @@ curl -s https://core.telegram.org/getProxyConfig -o /opt/MTProxy/proxy-multi.con
 log "Telegram config fetched"
 
 # ==============================
-# 5. Generate Secret
+# 5. Generate FakeTLS Secret
 # ==============================
-section "Generating Secret"
-SECRET=$(head -c 16 /dev/urandom | xxd -ps)
-log "Secret generated: $SECRET"
+section "Generating Secure FakeTLS Secret"
+DOMAIN="google.com"
+HEX_DOMAIN=$(echo -n "$DOMAIN" | xxd -ps)
+RANDOM_SECRET=$(head -c 16 /dev/urandom | xxd -ps)
+SECRET="ee${RANDOM_SECRET}${HEX_DOMAIN}"
+log "FakeTLS Secret generated (Domain: $DOMAIN)"
 
 # ==============================
 # 6. Get Server IP
@@ -96,18 +99,23 @@ echo ""
 read -p "Enter your proxy tag (or press Enter to skip): " PROXY_TAG
 
 # ==============================
-# 8. Create systemd Service
+# 8. Create systemd Service (Dynamic Command Method)
 # ==============================
 section "Creating systemd Service"
 
+CORES=$(nproc)
+
+# Building the ExecStart command in a single string to avoid backslash issues
+CMD="/opt/MTProxy/objs/bin/mtproto-proxy -u nobody -p 8888 -H $PORT -S $SECRET --aes-pwd /opt/MTProxy/proxy-secret /opt/MTProxy/proxy-multi.conf"
+
 if [ -n "$PROXY_TAG" ]; then
+    CMD="$CMD --proxy-tag $PROXY_TAG"
     log "Proxy tag will be included"
 else
     warn "No proxy tag provided, skipping sponsored channel"
 fi
 
-# گرفتن تعداد هسته های سرور برای جایگذاری دقیق
-CORES=$(nproc)
+CMD="$CMD --http-stats --max-special-connections 5000 -M $CORES"
 
 cat > /etc/systemd/system/mtproxy.service << SERVICE
 [Unit]
@@ -117,24 +125,11 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/MTProxy
-ExecStart=/opt/MTProxy/objs/bin/mtproto-proxy \
-  -u nobody \
-  -p 8888 \
-  -H $PORT \
-  -S $SECRET \
-  --aes-pwd /opt/MTProxy/proxy-secret /opt/MTProxy/proxy-multi.conf \
-SERVICE
-
-if [ -n "$PROXY_TAG" ]; then
-    echo "  --proxy-tag $PROXY_TAG \\" >> /etc/systemd/system/mtproxy.service
-fi
-
-cat >> /etc/systemd/system/mtproxy.service << SERVICE
-  --http-stats \
-  --max-special-connections 5000 \
-  -M $CORES
+ExecStart=$CMD
 Restart=always
 RestartSec=5
+LimitNOFILE=1048576
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target
@@ -150,11 +145,15 @@ systemctl is-active --quiet mtproxy && log "MTProxy service started" || error "M
 # 9. Firewall
 # ==============================
 section "Configuring Firewall"
+# Find the active SSH port to prevent lockouts
+SSH_PORT=$(echo $SSH_CONNECTION | awk '{print $4}')
+SSH_PORT=${SSH_PORT:-22}
+
 ufw allow $PORT/tcp
 ufw allow $PORT/udp
-ufw allow 22/tcp
+ufw allow $SSH_PORT/tcp
 ufw --force enable
-log "Firewall configured"
+log "Firewall configured (SSH port $SSH_PORT kept open)"
 
 # ==============================
 # 10. Cron for Auto-Update Config
@@ -169,8 +168,12 @@ log "Cron job added (every 6 hours)"
 section "Installing proxy-stats"
 cat > /usr/local/bin/proxy-stats << 'STATS'
 #!/bin/bash
-STATS=$(curl -s http://localhost:8888/stats)
+if ! systemctl is-active --quiet mtproxy; then
+    echo -e "\033[0;31m[✗] MTProxy is not running!\033[0m"
+    exit 1
+fi
 
+STATS=$(curl -s http://localhost:8888/stats)
 to_mb() { echo "scale=2; $1/1048576" | bc; }
 
 RX=$(echo "$STATS" | grep '^tcp_readv_bytes' | awk '{print $2}')
