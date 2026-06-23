@@ -28,8 +28,7 @@ A one-command script to install, configure, and run a **Telegram MTProto Proxy**
 ## ⚡ Quick Install
 
 ```bash
-curl -s https://raw.githubusercontent.com/amir-rxx/mtproxy-setup/main/install.sh | tr -d '\r' | bash
-
+bash <(curl -s https://raw.githubusercontent.com/amir-rxx/mtproxy-setup/main/install.sh)
 ```
 
 > The script will download the setup file to `/root/mtproxy-setup.sh` and run it automatically.
